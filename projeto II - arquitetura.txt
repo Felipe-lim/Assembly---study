@@ -1,0 +1,252 @@
+.686
+.model flat, stdcall
+option casemap:none
+
+include \masm32\include\windows.inc
+include \masm32\include\masm32.inc
+include \masm32\include\kernel32.inc
+include \masm32\include\user32.inc
+include \masm32\include\msvcrt.inc
+includelib \masm32\lib\masm32.lib
+includelib \masm32\lib\kernel32.lib
+includelib \masm32\lib\msvcrt.lib
+includelib \masm32\lib\user32.lib
+include \masm32\macros\macros.asm
+
+.data
+    media_asc db 3 dup(0)
+    
+    mensagem0 db 'Obs: foi adotado o sistema de notas 0-100 '
+    mensagem1 db 'Digite a primeira nota: $'
+    mensagem2 db 'Digite a segunda nota:  $'
+    mensagem3 db 'Digite a terceira nota: $'
+    
+    mensagem_media db 'A media do estudante e: $'
+    mensagem_aprovacao db 'O estudante esta aprovado!'
+    mensagem_reprovacao db 'O estudante esta reprovado. :('
+    mensagem_prova_final db 'O estudante esta de prova final.'
+    mensagem_precisao db 'O estudante precisa tirar: '
+
+    fim_de_linha db 10, 13
+
+    resultado_media db 4 dup(0)
+    resultado_precisao db 4 dup(0)
+
+    entrada db 4 dup(0)
+    inHandle dd 0
+    outHandle dd 0
+    count dd 0
+    
+
+.data?
+    nota1 dd ?
+    nota2 dd ?
+    nota3 dd ?
+    media dd ?
+    precisao dd ?
+
+.code
+start:
+    invoke GetStdHandle, STD_OUTPUT_HANDLE
+    mov outHandle, eax
+    
+    invoke GetStdHandle, STD_INPUT_HANDLE
+    mov inHandle, eax
+
+    ; ------ mensagem inicial
+
+    invoke WriteConsole, outHandle, addr mensagem0, sizeof mensagem0, addr count, NULL
+    invoke WriteConsole, outHandle, addr fim_de_linha, sizeof fim_de_linha, addr count, NULL
+
+    ; ------ entrada das medias + tratamento da string (conversao de ascii pra binario, pra possibilitar a manipulacao)
+    
+    invoke WriteConsole, outHandle, addr mensagem1, sizeof mensagem1, addr count, NULL
+    invoke ReadConsole, inHandle, addr nota1, sizeof nota1, addr count, NULL
+    push offset nota1           ; empilha
+    call trataString            ; \r p 0
+    invoke atodw, addr nota1    ; asc p binario
+    mov nota1, eax              ; armazena nota 1
+    
+
+    invoke WriteConsole, outHandle, addr mensagem2, sizeof mensagem2, addr count, NULL
+    invoke ReadConsole, inHandle, addr nota2, sizeof nota2, addr count, NULL
+    push offset nota2 
+    call trataString
+    invoke atodw, addr nota2    
+    mov nota2, eax
+
+    invoke WriteConsole, outHandle, addr mensagem3, sizeof mensagem3, addr count, NULL
+    invoke ReadConsole, inHandle, addr nota3, sizeof nota3, addr count, NULL
+    invoke WriteConsole, outHandle, addr fim_de_linha, sizeof fim_de_linha, addr count, NULL
+    push offset nota3 
+    call trataString
+    invoke atodw, addr nota3
+    mov nota3, eax 
+
+    ; ------- chama a pilha de execucao responsavel pelo calculo da media, e passa como parametros as 3 notas
+    push nota1
+    push nota2
+    push nota3
+    call calcularMedia
+
+
+    
+;==================================================
+
+    ; ------ Tratamento das strings 
+    ; toda string tem um caracter extra conhecido com CR (posicao 13)
+    ; o que to fazendo nesse trecho é, basicamente, percorrer todos os caracteres dela
+    ; e daí quando chega no CR, eu substituo por 0
+    
+trataString:
+    pop ebx ; retorno
+    pop esi ; endereco da string
+tratamento:
+    mov al, [esi] 
+    inc esi 
+    cmp al, 13
+    jne tratamento 
+    dec esi 
+    xor al, al 
+    mov [esi], al 
+    jmp ebx 
+
+    ; ------ Calculo das médias
+    ; criei uma pilha de execucao e aloquei 3 espacos de memoria (ponteiro esp - 12 (4 bytes * 3 espacos))
+
+;==================================================
+
+
+calcularMedia:
+    push ebp
+    mov ebp, esp
+    sub esp, 12
+
+    ; inicializo eax como 0, pra nao corromper o registrador com lixo
+
+    mov eax, 0
+
+    ; aloquei as variaveis na pilha
+    ; primeiro, eu passo elas para os registradores, depois eu movo pras posicoes reservadas
+    ; ps: como a pilha de assembly cresce para baixo, quando eu uso reg+valor eu estou acessando o que foi passado como parametro
+    ; e reg-valor me permite acessar um dos espaços alocados
+
+    mov edi, DWORD PTR [ebp+16] ; movimenta nota1, 2, 3 para os registradores
+    mov esi, DWORD PTR [ebp+12]
+    mov ebx, DWORD PTR [ebp+8]
+    
+    mov DWORD PTR [ebp-4], edi   ; nota1  movimenta dos registradores para a pilha local
+    mov DWORD PTR [ebp-8], esi  ; nota2
+    mov DWORD PTR [ebp-12], ebx  ; nota3
+
+    ; zerar o edx, pra nao comprometer a divisao
+
+    xor edx, edx
+
+    ; soma das 3 notas
+
+    mov eax, DWORD PTR [ebp-4]
+    add eax, DWORD PTR [ebp-8]
+    add eax, DWORD PTR [ebp-12]
+
+    ; divisao por 3
+   
+    mov ecx, 3
+    idiv ecx
+
+    ; o valor da divisao (por padrao eh armazenado em eax) eh guardado na variavel media
+    
+    mov media, eax
+
+    ; exibicao do valor da media
+    ; ps: como eu converti de string para um numero no loop principal e writeconsole so aceita string,
+    ; a funcao dwtoa ta sendo usada pra desconverter 
+    
+    invoke WriteConsole, outHandle, addr mensagem_media, sizeof mensagem_media, addr count, NULL
+    invoke dwtoa, media, addr resultado_media
+    invoke WriteConsole, outHandle, addr resultado_media, sizeof resultado_media, addr count, NULL
+    invoke WriteConsole, outHandle, addr fim_de_linha, sizeof fim_de_linha, addr count, NULL
+
+    ; compara o valor da media com 70, se for maior exibe a mensagem da aprovacao
+    ; se nao for, entra no loop naoAprovado
+
+    mov eax, media
+    cmp eax, 70
+    jge aprovado
+    cmp eax, 70
+    jl naoAprovado
+
+aprovado:
+    invoke WriteConsole, outHandle, addr mensagem_aprovacao, sizeof mensagem_aprovacao, addr count, NULL
+    jmp fimCalcularMedia
+    
+
+naoAprovado:
+
+    ; compara o valor da media com 40, se for maior entra no loop final
+    cmp eax, 40
+    jge final
+
+    ; se nao for, exibe a mensagem de reprovacao
+    
+    invoke WriteConsole, outHandle, addr mensagem_reprovacao, sizeof mensagem_reprovacao, addr count, NULL
+    jmp fimCalcularMedia    
+
+final:
+
+    ; exibicao da mensagem da final
+    
+    invoke WriteConsole, outHandle, addr mensagem_prova_final, sizeof mensagem_prova_final, addr count, NULL   
+    invoke WriteConsole, outHandle, addr fim_de_linha, sizeof fim_de_linha, addr count, NULL
+
+    ; zera edx pra nao comprometer a divisao
+    
+    xor edx, edx
+    
+    ; calculo de quanto eh preciso para passar na final
+    ; (50 - (6*media))/4
+    ; adaptando ao sistema, temos: (500 - (6*media))/4
+    
+    ; entao, eax passa a armazenar 500 e ebx o valor da media
+    
+    mov eax, 500
+    mov ebx, media
+
+    ; multiplicacao da media por 6
+
+    imul ebx, 6
+
+    ; subtrai de 500 o valor de ebx (ja atualizado com a multiplicacao)
+
+    sub eax, ebx
+
+    ; divide por 4
+    
+    mov ecx, 4
+    div ecx
+
+    ; move o valor da precisao (eax) para a variavel precisao
+
+    mov precisao, eax
+
+    ; exibicao da mensagem de quanto eh  preciso para o aluno ser aprovado
+    
+    invoke WriteConsole, outHandle, addr mensagem_precisao, sizeof mensagem_precisao, addr count, NULL
+    invoke dwtoa, precisao, addr resultado_precisao
+    invoke WriteConsole, outHandle, addr resultado_precisao, sizeof resultado_precisao, addr count, NULL
+    invoke WriteConsole, outHandle, addr fim_de_linha, sizeof fim_de_linha, addr count, NULL
+  
+
+    jmp fimCalcularMedia
+    
+fimCalcularMedia:
+
+    ; fim da pilha, retorna ao endereco anterior (onde parou no loop principal)
+    pop ebp
+    ret
+    
+ 
+;==================================================
+
+
+end start
